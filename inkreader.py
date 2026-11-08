@@ -45,7 +45,7 @@ import pymupdf
 from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageTk
 
 APP_NAME = "InkReader"
-VERSION = "1.4"
+VERSION = "1.5"
 COPYRIGHT = "Copyright (C) 2026 Gautam1988"
 SOURCE_URL = "https://github.com/Gautam1988/inkreader"
 LICENSE_NOTICE = (
@@ -133,6 +133,10 @@ def page_colors(page, brightness):
 
 QUALITIES = [(1, "Standard (fastest)"), (2, "High - 2x supersampled"), (3, "Maximum - 3x supersampled")]
 MAX_RENDER_PIXELS = 45_000_000
+
+# Welcome screen (shown while no document is open): always light and quiet.
+WELCOME = {"bg": "#ffffff", "fg": "#1a1a1a", "muted": "#6f6f6f", "faint": "#a6a6a6", "line": "#ececec",
+           "hover": "#f4f4f4", "btn": "#1a1a1a", "btn_hover": "#3d3d3d", "badge": "#d9d9d9"}
 
 # Palettes. Pure black / near-white keeps e-ink ghosting low; nothing animates.
 PALETTES = {
@@ -698,7 +702,7 @@ class App:
         self._build_ui()
         self._bind_keys()
         root.protocol("WM_DELETE_WINDOW", lambda: (log("window closed (close button / Alt+F4)"), self.quit()))
-        root.after(60, lambda: set_dark_titlebar(root, self.night))
+        root.after(60, self._update_titlebar)
         if self.s["reading_mode"]:
             root.after(150, lambda: self.set_reading_mode(True))
         if path:
@@ -786,7 +790,7 @@ class App:
             elif cls in ("Radiobutton", "Checkbutton"):
                 w.config(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=bg)
             elif cls == "Canvas":
-                w.config(bg=self.paper())
+                w.config(bg=self.paper() if self.doc else WELCOME["bg"])
         except tk.TclError:
             pass
         for child in w.winfo_children():
@@ -796,8 +800,13 @@ class App:
         self.theme_widget(win)
         set_dark_titlebar(win, self.night)
 
+    def _update_titlebar(self):
+        """Dark title bar only while reading in the dark frame; the welcome screen stays light."""
+        set_dark_titlebar(self.root, self.night and self.doc is not None)
+
     def apply_theme(self):
         self.finish_window(self.root)
+        self._update_titlebar()
         for w in self.root.winfo_children():
             if isinstance(w, tk.Toplevel):
                 self.finish_window(w)
@@ -853,7 +862,7 @@ class App:
             w.pack_forget()
             w.place_forget()
         self.overlay = False
-        if self.fullscreen:   # reading mode: nothing but the page
+        if self.fullscreen or not self.doc:   # reading mode / welcome screen: nothing but the canvas
             self.canvas.pack(side="top", fill="both", expand=True)
             return
         if self.s["show_toolbar"]:
@@ -979,6 +988,10 @@ class App:
         self.s["recent"] = [path] + recent[:14]
         self.root.title(f"{os.path.basename(path)} - {APP_NAME}")
         self.s.save()
+        self.canvas.config(bg=self.paper(), cursor="")
+        self._layout_chrome()          # toolbar + status bar come back with a document
+        self._update_titlebar()
+        self.root.update_idletasks()   # settle the canvas size before the first render
         self.show()
         self.canvas.focus_set()
 
@@ -992,6 +1005,9 @@ class App:
         self.prefetch_queue = []
         self.root.title(APP_NAME)
         if repaint:
+            self._layout_chrome()
+            self._update_titlebar()
+            self.root.update_idletasks()
             self.paint_empty()
             self.update_status()
 
@@ -1163,22 +1179,183 @@ class App:
             self._draw_reading_info()
         self.update_status()
 
+    # -- welcome screen (no document open) --------------------------------------
+
+    def _welcome_fonts(self):
+        if not hasattr(self, "_wf"):
+            F = tkfont.Font
+            self._wf = {
+                "title": F(family="Segoe UI Semibold", size=26),
+                "tagline": F(family="Segoe UI", size=12),
+                "button": F(family="Segoe UI Semibold", size=12),
+                "label": F(family="Segoe UI Semibold", size=9),
+                "name": F(family="Segoe UI Semibold", size=11),
+                "small": F(family="Segoe UI", size=9),
+                "link": F(family="Segoe UI", size=9, underline=True),
+            }
+        return self._wf
+
+    def _welcome_icon(self, size):
+        if getattr(self, "_wicon_size", None) != size:
+            try:
+                img = Image.open(resource("inkreader.ico")).convert("RGBA")
+                self._wicon = ImageTk.PhotoImage(img.resize((size, size), Image.LANCZOS))
+            except Exception:
+                self._wicon = None
+            self._wicon_size = size
+        return self._wicon
+
+    def _round_rect(self, x0, y0, x1, y1, r, **kw):
+        pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
+               x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
+        return self.canvas.create_polygon(pts, smooth=True, **kw)
+
+    @staticmethod
+    def _elide(font, text, width, middle=False):
+        if font.measure(text) <= width:
+            return text
+        dots = "…"
+        lo, hi = 0, len(text)
+        while lo < hi:   # longest prefix (or prefix+suffix) that fits
+            mid = (lo + hi + 1) // 2
+            cand = (text[:mid // 2] + dots + text[len(text) - mid // 2:]) if middle else text[:mid] + dots
+            if font.measure(cand) <= width:
+                lo = mid
+            else:
+                hi = mid - 1
+        return (text[:lo // 2] + dots + text[len(text) - lo // 2:]) if middle else text[:lo] + dots
+
     def paint_empty(self):
+        """White welcome page: icon, title, Open button, recent documents, tips."""
         c = self.canvas
         c.delete("all")
-        pal = self.pal()
-        c.config(bg=self.paper())
+        W = WELCOME
+        c.config(bg=W["bg"], cursor="")
         cw, ch = self._canvas_size()
-        c.create_text(cw // 2, ch // 2 - 90, text=APP_NAME, font=("Segoe UI", 30, "bold"), fill=pal["fg"])
-        c.create_text(cw // 2, ch // 2 - 40, text="Click anywhere or press Ctrl+O to open a PDF or e-book",
-                      font=self.font_small, fill=pal["dim"])
-        recent = [p for p in self.s["recent"] if os.path.exists(p)][:6]
+        if cw < 240 or ch < 240:
+            return
+        f = self._welcome_fonts()
+        ls = {k: v.metrics("linespace") for k, v in f.items()}
+        col = min(660, cw - 64)
+        left, right, cx = (cw - col) // 2, (cw + col) // 2, cw // 2
+        icon_px = 72 if ch > 640 else 48
+        row_h = ls["name"] + ls["small"] + 26
+        header_h = icon_px + 18 + ls["title"] + 6 + ls["tagline"] + 30 + 50 + 14 + ls["small"]
+        footer_h = 2 * ls["small"] + 46
+        recent = [p for p in self.s["recent"] if os.path.exists(p)]
+        room = ch - header_h - footer_h - 60 - (ls["label"] + 14)
+        recent = recent[:max(0, min(6, room // row_h))]
+        self._empty_recent = recent
+        total = header_h + ((44 + ls["label"] + 10 + len(recent) * row_h) if recent else 0)
+        y = max(24, (ch - footer_h - total) // 2)
+
+        icon = self._welcome_icon(icon_px)
+        if icon:
+            c.create_image(cx, y, image=icon, anchor="n")
+        y += icon_px + 18
+        c.create_text(cx, y, text=APP_NAME, font=f["title"], fill=W["fg"], anchor="n")
+        y += ls["title"] + 6
+        c.create_text(cx, y, text="Calm reading for e-ink screens and tired eyes",
+                      font=f["tagline"], fill=W["muted"], anchor="n")
+        y += ls["tagline"] + 30
+
+        bw, bh = 280, 50
+        self._round_rect(cx - bw // 2, y, cx + bw // 2, y + bh, 14, fill=W["btn"], outline="",
+                         tags=("open_btn", "open_btn_bg"))
+        c.create_text(cx, y + bh // 2, text="Open a document", font=f["button"], fill="#ffffff", tags="open_btn")
+        y += bh + 14
+        c.create_text(cx, y, text="Ctrl+O     ·     PDF, EPUB, MOBI, FB2, XPS, CBZ",
+                      font=f["small"], fill=W["faint"], anchor="n")
+        y += ls["small"]
+
         if recent:
-            c.create_text(cw // 2, ch // 2 + 10, text="Recent", font=self.font, fill=pal["fg"])
-            for i, p in enumerate(recent):
-                c.create_text(cw // 2, ch // 2 + 45 + i * 34, text=os.path.basename(p),
-                              font=self.font_small, fill=pal["fg"], tags=("recent", "recent:" + str(i)))
-            self._empty_recent = recent
+            y += 44
+            c.create_text(left + 12, y, text="RECENT", font=f["label"], fill=W["muted"], anchor="nw")
+            y += ls["label"] + 10
+            c.create_line(left + 12, y, right - 12, y, fill=W["line"])
+            positions = self.s["positions"]
+            for i, path in enumerate(recent):
+                tags = (f"recent:{i}", f"row{i}")
+                c.create_rectangle(left, y + 1, right, y + row_h, fill=W["bg"], outline="",
+                                   tags=tags + (f"rowbg{i}",))
+                mid = y + row_h // 2
+                ext = (os.path.splitext(path)[1][1:].upper() or "FILE")[:4]
+                self._round_rect(left + 12, mid - 13, left + 60, mid + 13, 7, fill=W["bg"], outline=W["badge"],
+                                 tags=tags + (f"badge{i}",))
+                c.create_text(left + 36, mid, text=ext, font=f["label"], fill=W["muted"], tags=tags)
+                tx = left + 78
+                pos = positions.get(path)
+                page_txt = f"Page {int(pos[0]) + 1}" if pos else ""
+                text_w = right - tx - 110
+                c.create_text(tx, mid - 1, text=self._elide(f["name"], os.path.basename(path), text_w),
+                              font=f["name"], fill=W["fg"], anchor="sw", tags=tags)
+                c.create_text(tx, mid + 1, text=self._elide(f["small"], os.path.dirname(path), text_w, True),
+                              font=f["small"], fill=W["muted"], anchor="nw", tags=tags)
+                c.create_text(right - 44, mid, text=page_txt, font=f["small"], fill=W["muted"], anchor="e",
+                              tags=tags)
+                c.create_text(right - 16, mid, text="✕", font=f["small"], fill=W["muted"], state="hidden",
+                              tags=tags + (f"remove:{i}", f"x{i}"))
+                y += row_h
+                c.create_line(left + 12, y, right - 12, y, fill=W["line"])
+
+        fy = ch - 22
+        c.create_text(cx, fy - ls["small"] - 10,
+                      text="F11  reading mode     ·     I  paper style     ·     ?  all shortcuts",
+                      font=f["small"], fill=W["faint"], anchor="s")
+        part1 = f"Version {VERSION}   ·   Free and open source (AGPL)   ·   "
+        w1, w2 = f["small"].measure(part1), f["small"].measure("Source on GitHub")
+        x0 = cx - (w1 + w2) // 2
+        c.create_text(x0, fy, text=part1, font=f["small"], fill=W["faint"], anchor="sw")
+        c.create_text(x0 + w1, fy, text="Source on GitHub", font=f["small"], fill=W["muted"], anchor="sw",
+                      tags=("link_src",))
+        self._bind_welcome_hover(len(recent))
+
+    def _bind_welcome_hover(self, rows):
+        c, W = self.canvas, WELCOME
+
+        def hand(on):
+            c.config(cursor="hand2" if on else "")
+        c.tag_bind("open_btn", "<Enter>", lambda e: (c.itemconfig("open_btn_bg", fill=W["btn_hover"]), hand(True)))
+        c.tag_bind("open_btn", "<Leave>", lambda e: (c.itemconfig("open_btn_bg", fill=W["btn"]), hand(False)))
+        c.tag_bind("link_src", "<Enter>", lambda e: (c.itemconfig("link_src", font=self._wf["link"],
+                                                                  fill=W["fg"]), hand(True)))
+        c.tag_bind("link_src", "<Leave>", lambda e: (c.itemconfig("link_src", font=self._wf["small"],
+                                                                  fill=W["muted"]), hand(False)))
+        for i in range(rows):
+            def enter(e, i=i):
+                c.itemconfig(f"rowbg{i}", fill=W["hover"])
+                c.itemconfig(f"badge{i}", fill=W["hover"])
+                c.itemconfig(f"x{i}", state="normal")
+                hand(True)
+
+            def leave(e, i=i):
+                c.itemconfig(f"rowbg{i}", fill=W["bg"])
+                c.itemconfig(f"badge{i}", fill=W["bg"])
+                c.itemconfig(f"x{i}", state="hidden", fill=W["muted"])
+                hand(False)
+            c.tag_bind(f"row{i}", "<Enter>", enter)
+            c.tag_bind(f"row{i}", "<Leave>", leave)
+            c.tag_bind(f"x{i}", "<Enter>", lambda e, i=i: c.itemconfig(f"x{i}", fill=W["fg"]))
+
+    def _welcome_click(self):
+        tags = set()
+        for item in self.canvas.find_withtag("current"):
+            tags.update(self.canvas.gettags(item))
+        for t in tags:
+            if t.startswith("remove:"):
+                path = self._empty_recent[int(t.split(":")[1])]
+                self.s["recent"] = [p for p in self.s["recent"] if p != path]
+                self.s.save()
+                self.paint_empty()
+                return
+        for t in tags:
+            if t.startswith("recent:"):
+                self.open(self._empty_recent[int(t.split(":")[1])])
+                return
+        if "open_btn" in tags:
+            self.open_dialog()
+        elif "link_src" in tags:
+            webbrowser.open(SOURCE_URL)
 
     def update_status(self):
         if not self.doc:
@@ -1369,12 +1546,7 @@ class App:
     def on_click(self, e):
         self.canvas.focus_set()
         if not self.doc:
-            for item in self.canvas.find_withtag("current"):
-                for tag in self.canvas.gettags(item):
-                    if tag.startswith("recent:"):
-                        self.open(self._empty_recent[int(tag.split(":")[1])])
-                        return
-            self.open_dialog()
+            self._welcome_click()
             return
         if self.overlay:   # first click on the page just tucks the toolbar away
             self._hide_overlay()
