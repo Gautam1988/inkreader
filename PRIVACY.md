@@ -21,7 +21,7 @@ The documents you open are read from your disk and are never uploaded anywhere.
 InkReader has no accounts, analytics, telemetry, advertising or tracking, and it makes no network connections of its own. It opens your web browser only when you click a link yourself:
 
 - a web link inside a document (InkReader asks before opening it)
-- **Source on GitHub** or **♥ Sponsor**, which open pages on github.com. GitHub's own privacy statement applies there.
+- **Source on GitHub** or **Source code**, which open the project page on github.com. GitHub's own privacy statement applies there.
 
 ## Children
 

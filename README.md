@@ -8,19 +8,12 @@ Free and open source under the [GNU AGPL v3](LICENSE).
 
 ## Download
 
-Get **`InkReader.exe`** from the [latest release](https://github.com/Gautam1988/inkreader/releases/latest). It is a single portable file for Windows 10 or 11, with no install and no Python needed.
+From the [latest release](https://github.com/Gautam1988/inkreader/releases/latest), for Windows 10 or 11 (no install, no Python needed), download either:
+
+- **`InkReader-<version>-portable.zip`** *(recommended)*: unzip it anywhere and run `InkReader.exe` from the folder. It starts in about 1–2 seconds.
+- **`InkReader.exe`**: a single file you can just double-click. It starts more slowly (several seconds) because it unpacks itself on every launch.
 
 > **Windows may warn you the first time** ("Windows protected your PC"). This happens because the app isn't code-signed yet. Click **More info → Run anyway**. You can also build it yourself from this source (see below).
-
-## Support InkReader ♥
-
-InkReader is free and always will be. If it makes your reading more comfortable, please consider [**sponsoring it on GitHub**](https://github.com/sponsors/Gautam1988). Sponsorships fund:
-
-- **Code signing**, so Windows stops warning about an unknown app
-- **Testing on real e-ink monitors** (Dasung, Boox Mira and others)
-- New features and continued maintenance
-
-Starring the repository and sharing it with someone who reads a lot help too.
 
 ## Run it
 

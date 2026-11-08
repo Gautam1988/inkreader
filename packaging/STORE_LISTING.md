@@ -48,7 +48,6 @@ InkReader runs entirely on your computer. It has no accounts, no tracking and no
 ## What's new in this version
 • New clean, white welcome screen with your recent documents and the page you were on in each
 • Faster start-up in the Microsoft Store version
-• Optional ♥ Sponsor link to support development (it unlocks nothing; InkReader is fully free)
 
 ## Product features *(up to 20, each up to 200 characters)*
 1. Soft paper styles (warm, sepia, gray, night) with adjustable brightness
