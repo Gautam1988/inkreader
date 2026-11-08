@@ -1,0 +1,3 @@
+# Exact versions bundled in the released InkReader.exe (see THIRD_PARTY_NOTICES.md)
+pymupdf==2.1
+pillow==13.0.0
