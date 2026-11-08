@@ -70,6 +70,16 @@ That creates a virtual environment, installs the pinned dependencies from `requi
 
 To run it without building: `.venv\Scripts\python.exe inkreader.py [file.pdf]`.
 
+### Microsoft Store package (MSIX)
+
+`build_msix.ps1` builds an MSIX from the faster-starting folder build. It includes Store tiles, file associations for PDF/EPUB/MOBI/FB2/XPS/CBZ and an `inkreader` command alias. It needs the Windows 10/11 SDK. For a Store upload, pass the identity values from Partner Center → Product identity:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build_msix.ps1 -IdentityName "<Package/Identity/Name>" -Publisher "<CN=...>" -PublisherDisplayName "<name>"
+```
+
+The listing text is in `packaging/STORE_LISTING.md`, the screenshots in `packaging/store-screenshots/` (regenerate them with `packaging/make_screenshots.py`), and the privacy policy in [PRIVACY.md](PRIVACY.md).
+
 It is built with [PyMuPDF](https://pymupdf.readthedocs.io/) (the MuPDF rendering engine), Pillow and Tkinter.
 
 ## License

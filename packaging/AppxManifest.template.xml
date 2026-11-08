@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later. Placeholders in {BRACES} are filled by build_msix.ps1. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap5 rescap">
+
+  <Identity Name="{IDENTITY_NAME}" Publisher="{PUBLISHER}" Version="{VERSION}" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>InkReader</DisplayName>
+    <PublisherDisplayName>{PUBLISHER_DISPLAY_NAME}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>A calm PDF and e-book reader for e-ink screens and tired eyes.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="InkReader" Executable="InkReader.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="InkReader"
+        Description="A calm PDF and e-book reader for e-ink screens and tired eyes."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square71x71Logo="Assets\Square71x71Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png"
+          ShortName="InkReader">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+            <uap:ShowOn Tile="wide310x150Logo" />
+            <uap:ShowOn Tile="square310x310Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
+      </uap:VisualElements>
+
+      <Extensions>
+        <!-- "Open with -> InkReader" for supported documents (the file path arrives as argv[1]) -->
+        <uap3:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="inkreader.documents" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>InkReader document</uap:DisplayName>
+            <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.pdf</uap:FileType>
+              <uap:FileType>.epub</uap:FileType>
+              <uap:FileType>.mobi</uap:FileType>
+              <uap:FileType>.fb2</uap:FileType>
+              <uap:FileType>.xps</uap:FileType>
+              <uap:FileType>.oxps</uap:FileType>
+              <uap:FileType>.cbz</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
+
+        <!-- Lets you start it as `inkreader` from Run (Win+R) or a terminal -->
+        <uap5:Extension Category="windows.appExecutionAlias" Executable="InkReader.exe"
+                        EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias>
+            <uap5:ExecutionAlias Alias="inkreader.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
