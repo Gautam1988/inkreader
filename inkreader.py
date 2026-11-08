@@ -45,9 +45,10 @@ import pymupdf
 from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageTk
 
 APP_NAME = "InkReader"
-VERSION = "1.5"
+VERSION = "1.5.1"
 COPYRIGHT = "Copyright (C) 2026 Gautam1988"
 SOURCE_URL = "https://github.com/Gautam1988/inkreader"
+SPONSOR_URL = "https://github.com/sponsors/Gautam1988"
 LICENSE_NOTICE = (
     "InkReader is free software under the GNU Affero General Public License v3 or later.\n"
     "It comes with ABSOLUTELY NO WARRANTY. You may redistribute and modify it under\n"
@@ -137,6 +138,11 @@ MAX_RENDER_PIXELS = 45_000_000
 # Welcome screen (shown while no document is open): always light and quiet.
 WELCOME = {"bg": "#ffffff", "fg": "#1a1a1a", "muted": "#6f6f6f", "faint": "#a6a6a6", "line": "#ececec",
            "hover": "#f4f4f4", "btn": "#1a1a1a", "btn_hover": "#3d3d3d", "badge": "#d9d9d9"}
+# Sponsor accent (pink). The welcome-screen pill pulses between the two "pulse" states.
+SPONSOR = {"accent": "#d6336c", "accent_dark": "#b02457", "soft": "#fff0f5", "vivid": "#f06595",
+           "border": "#f4a3c0"}
+SPONSOR_PULSE_MS = 650
+EINK_MODES = ("gray16", "bw", "dither")   # no blinking on e-ink: every change forces a panel refresh
 
 # Palettes. Pure black / near-white keeps e-ink ghosting low; nothing animates.
 PALETTES = {
@@ -770,7 +776,13 @@ class App:
         cls = w.winfo_class()
         border = dict(bd=0, highlightthickness=1, highlightbackground=fg, highlightcolor=fg)
         try:
-            if getattr(w, "_is_border", False):
+            if getattr(w, "_accent", False):   # sponsor button keeps its pink in both themes
+                if cls == "Button":
+                    w.config(bg=SPONSOR["accent"], fg="#ffffff", activebackground=SPONSOR["accent_dark"],
+                             activeforeground="#ffffff")
+                else:
+                    w.config(bg=SPONSOR["accent"])
+            elif getattr(w, "_is_border", False):
                 w.config(bg=fg)
             elif cls in ("Frame", "Toplevel", "Tk"):
                 w.config(bg=bg)
@@ -1302,13 +1314,67 @@ class App:
         c.create_text(cx, fy - ls["small"] - 10,
                       text="F11  reading mode     ·     I  paper style     ·     ?  all shortcuts",
                       font=f["small"], fill=W["faint"], anchor="s")
-        part1 = f"Version {VERSION}   ·   Free and open source (AGPL)   ·   "
-        w1, w2 = f["small"].measure(part1), f["small"].measure("Source on GitHub")
-        x0 = cx - (w1 + w2) // 2
-        c.create_text(x0, fy, text=part1, font=f["small"], fill=W["faint"], anchor="sw")
-        c.create_text(x0 + w1, fy, text="Source on GitHub", font=f["small"], fill=W["muted"], anchor="sw",
-                      tags=("link_src",))
+        sep = "   ·   "
+        parts = [(f"Version {VERSION}{sep}Free and open source (AGPL){sep}", None),
+                 ("Source on GitHub", "link_src"), (sep, None), ("♥ Sponsor", "link_sponsor")]
+        x = cx - sum(f["small"].measure(t) for t, _ in parts) // 2
+        for text, tag in parts:
+            fill = SPONSOR["accent"] if tag == "link_sponsor" else W["muted"] if tag else W["faint"]
+            c.create_text(x, fy, text=text, font=f["small"], anchor="sw", fill=fill, tags=(tag,) if tag else ())
+            x += f["small"].measure(text)
+        self._draw_sponsor_pill(cw)
         self._bind_welcome_hover(len(recent))
+
+    def _draw_sponsor_pill(self, cw):
+        """Pink 'Sponsor' pill in the top-right corner of the welcome screen."""
+        c, f = self.canvas, self._welcome_fonts()
+        heart, label = "♥", "  Sponsor"
+        hw, lw = f["button"].measure(heart), f["button"].measure(label)
+        h = f["button"].metrics("linespace") + 14
+        w = hw + lw + 40
+        x1, y0 = cw - 22, 18
+        x0, y1 = x1 - w, y0 + h
+        r = h / 2   # true pill: two half-circle caps + a rectangle, with a matching outline
+        t_fill, t_line, t_arc = ("sponsor_pill", "sponsor_bg"), ("sponsor_pill", "sponsor_line"), \
+            ("sponsor_pill", "sponsor_arc")
+        c.create_oval(x0, y0, x0 + 2 * r, y1, outline="", tags=t_fill)
+        c.create_oval(x1 - 2 * r, y0, x1, y1, outline="", tags=t_fill)
+        c.create_rectangle(x0 + r, y0, x1 - r, y1, outline="", tags=t_fill)
+        c.create_arc(x0, y0, x0 + 2 * r, y1, start=90, extent=180, style="arc", width=1.5, tags=t_arc)
+        c.create_arc(x1 - 2 * r, y0, x1, y1, start=270, extent=180, style="arc", width=1.5, tags=t_arc)
+        c.create_line(x0 + r, y0, x1 - r, y0, width=1.5, tags=t_line)
+        c.create_line(x0 + r, y1, x1 - r, y1, width=1.5, tags=t_line)
+        c.create_text(x0 + 20, (y0 + y1) // 2, text=heart, font=f["button"], anchor="w",
+                      tags=("sponsor_pill", "sponsor_text"))
+        c.create_text(x0 + 20 + hw, (y0 + y1) // 2, text=label, font=f["button"], anchor="w",
+                      tags=("sponsor_pill", "sponsor_text"))
+        self._pulse_on, self._pill_hover = False, False
+        self._style_pill("rest")
+        if self.s["mode"] not in EINK_MODES:
+            self._later("pulse", SPONSOR_PULSE_MS, self._pulse_sponsor)
+        elif "pulse" in self.jobs:          # e-ink: stay solid, no refresh-forcing blinks
+            self.root.after_cancel(self.jobs.pop("pulse"))
+
+    def _pulse_sponsor(self):
+        """Gentle blink: background and heart alternate between soft and bright pink."""
+        c = self.canvas
+        if self.doc or not c.find_withtag("sponsor_bg") or self.s["mode"] in EINK_MODES:
+            return
+        if not self._pill_hover:
+            self._pulse_on = not self._pulse_on
+            self._style_pill("pulse" if self._pulse_on else "rest")
+        self._later("pulse", SPONSOR_PULSE_MS, self._pulse_sponsor)
+
+    def _style_pill(self, state):
+        """rest: soft pink with pink text; pulse: vivid pink with white text; hover: deep pink."""
+        fill, edge, text = {"rest": (SPONSOR["soft"], SPONSOR["border"], SPONSOR["accent"]),
+                            "pulse": (SPONSOR["vivid"], SPONSOR["vivid"], "#ffffff"),
+                            "hover": (SPONSOR["accent"], SPONSOR["accent"], "#ffffff")}[state]
+        c = self.canvas
+        c.itemconfig("sponsor_bg", fill=fill)
+        c.itemconfig("sponsor_arc", outline=edge)
+        c.itemconfig("sponsor_line", fill=edge)
+        c.itemconfig("sponsor_text", fill=text)
 
     def _bind_welcome_hover(self, rows):
         c, W = self.canvas, WELCOME
@@ -1317,10 +1383,20 @@ class App:
             c.config(cursor="hand2" if on else "")
         c.tag_bind("open_btn", "<Enter>", lambda e: (c.itemconfig("open_btn_bg", fill=W["btn_hover"]), hand(True)))
         c.tag_bind("open_btn", "<Leave>", lambda e: (c.itemconfig("open_btn_bg", fill=W["btn"]), hand(False)))
-        c.tag_bind("link_src", "<Enter>", lambda e: (c.itemconfig("link_src", font=self._wf["link"],
-                                                                  fill=W["fg"]), hand(True)))
-        c.tag_bind("link_src", "<Leave>", lambda e: (c.itemconfig("link_src", font=self._wf["small"],
-                                                                  fill=W["muted"]), hand(False)))
+        for tag, rest, over in (("link_src", W["muted"], W["fg"]),
+                                ("link_sponsor", SPONSOR["accent"], SPONSOR["accent_dark"])):
+            c.tag_bind(tag, "<Enter>", lambda e, t=tag, o=over: (c.itemconfig(t, font=self._wf["link"], fill=o),
+                                                                 hand(True)))
+            c.tag_bind(tag, "<Leave>", lambda e, t=tag, r=rest: (c.itemconfig(t, font=self._wf["small"], fill=r),
+                                                                 hand(False)))
+
+        def pill(on):
+            self._pill_hover = on
+            self._pulse_on = False
+            self._style_pill("hover" if on else "rest")
+            hand(on)
+        c.tag_bind("sponsor_pill", "<Enter>", lambda e: pill(True))
+        c.tag_bind("sponsor_pill", "<Leave>", lambda e: pill(False))
         for i in range(rows):
             def enter(e, i=i):
                 c.itemconfig(f"rowbg{i}", fill=W["hover"])
@@ -1356,6 +1432,8 @@ class App:
             self.open_dialog()
         elif "link_src" in tags:
             webbrowser.open(SOURCE_URL)
+        elif "link_sponsor" in tags or "sponsor_pill" in tags:
+            webbrowser.open(SPONSOR_URL)
 
     def update_status(self):
         if not self.doc:
@@ -1609,6 +1687,7 @@ class App:
                           command=self.toggle_reading_info)
         m.add_separator()
         m.add_command(label="Keyboard shortcuts and About", command=self.show_help)
+        m.add_command(label="♥ Sponsor InkReader", command=lambda: webbrowser.open(SPONSOR_URL))
         m.tk_popup(e.x_root, e.y_root)
 
     # -- view commands --------------------------------------------------------
@@ -1900,6 +1979,8 @@ class App:
                  justify="left").pack(anchor="w", padx=16, pady=(0, 6))
         bar = tk.Frame(win, bg="white")
         bar.pack(fill="x", padx=12, pady=(0, 10))
+        sponsor = self._dialog_btn(bar, "♥ Sponsor", lambda: webbrowser.open(SPONSOR_URL))
+        sponsor._accent = sponsor.master._accent = True
         self._dialog_btn(bar, "Source code", lambda: webbrowser.open(SOURCE_URL))
         self._dialog_btn(bar, "Licence", self.open_license)
         self._dialog_btn(bar, "Third-party notices", lambda: self.open_license("THIRD_PARTY_NOTICES.md"))

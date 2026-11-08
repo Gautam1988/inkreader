@@ -12,6 +12,16 @@ Get **`InkReader.exe`** from the [latest release](https://github.com/Gautam1988/
 
 > **Windows may warn you the first time** ("Windows protected your PC"). This happens because the app isn't code-signed yet. Click **More info → Run anyway**. You can also build it yourself from this source (see below).
 
+## Support InkReader ♥
+
+InkReader is free and always will be. If it makes your reading more comfortable, please consider [**sponsoring it on GitHub**](https://github.com/sponsors/Gautam1988). Sponsorships fund:
+
+- **Code signing**, so Windows stops warning about an unknown app
+- **Testing on real e-ink monitors** (Dasung, Boox Mira and others)
+- New features and continued maintenance
+
+Starring the repository and sharing it with someone who reads a lot help too.
+
 ## Run it
 
 - Double-click it, then click anywhere or press **Ctrl+O**.
