@@ -2,18 +2,24 @@
 
 **A calm PDF and e-book reader for Windows, built for e-ink monitors and tired eyes.**
 
-Ordinary readers like Acrobat scroll smoothly, animate, and draw thin gray text on glaring white. On an e-ink monitor (Dasung Paperlike, Boox Mira, an e-ink tablet used as a second screen) that causes smearing, ghosting and faint pages. On a normal LCD it tires your eyes. InkReader turns whole pages at a time, shows dark, sharp text on soft warm paper, and has a full-screen reading mode with nothing else on screen.
+Ordinary readers like Acrobat draw thin gray text on glaring white and surround the page with toolbars. On an e-ink monitor (Dasung Paperlike, Boox Mira, an e-ink tablet used as a second screen) that means faint, ghosting pages. On a normal LCD it tires your eyes. InkReader shows dark, sharp text on soft warm paper and has a full-screen reading mode with nothing else on screen. It scrolls with gentle glides that mark the line you were reading (or instant page turns on e-ink), and you can click any word to copy, find or define it.
 
 Free and open source under the [GNU AGPL v3](LICENSE).
 
 ## Download
 
-From the [latest release](https://github.com/Gautam1988/inkreader/releases/latest), for Windows 10 or 11 (no install, no Python needed), download either:
+<a href="https://apps.microsoft.com/detail/9N4W8FK220NX?mode=direct">
+  <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200" alt="Get it from Microsoft"/>
+</a>
+
+**Recommended: install from the [Microsoft Store](https://apps.microsoft.com/detail/9N4W8FK220NX)** (free, for 64-bit Windows 10 and 11). You get one-click install, automatic updates and no security warning.
+
+**Or download it directly** from the [latest GitHub release](https://github.com/Gautam1988/inkreader/releases/latest) (no install, no Python needed):
 
 - **`InkReader-<version>-portable.zip`** *(recommended)*: unzip it anywhere and run `InkReader.exe` from the folder. It starts in about 1–2 seconds.
 - **`InkReader.exe`**: a single file you can just double-click. It starts more slowly (several seconds) because it unpacks itself on every launch.
 
-> **Windows may warn you the first time** ("Windows protected your PC"). This happens because the app isn't code-signed yet. Click **More info → Run anyway**. You can also build it yourself from this source (see below).
+> **The GitHub downloads may get a Windows warning the first time** ("Windows protected your PC"), because they aren't code-signed. Click **More info → Run anyway**, use the Microsoft Store version instead, or build it yourself from this source (see below).
 
 ## Run it
 
