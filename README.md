@@ -32,8 +32,11 @@ Supported formats: PDF, EPUB, MOBI, FB2, XPS, CBZ.
 | **Dark app frame** (U) | The toolbar, dialogs, title bar and the area around the page are black, so the only bright thing on screen is the page itself. |
 | **Sharp LCD text** | Subpixel text rendering, like Windows ClearType: each pixel's red, green and blue stripes get their own sample, which gives 3× horizontal detail. FreeType's LCD filter keeps colour fringes down. It is on by default (RGB); in Display settings, set **BGR** for those panels or **Off** for e-ink and rotated screens. It is used with the Grayscale rendering mode. |
 | **High resolution** (Q) | Pages are drawn at 2× (or 3×) the screen resolution and scaled down with a sharp filter. Bold text is applied at the higher resolution, which gives cleaner, more even strokes. The image processing runs on a background thread, so upcoming pages are prepared while you read. |
+| **Smooth scrolling** | In Fit width and reading mode, the mouse wheel and ↑/↓ glide a few lines; Space, PgDn and → glide a whole screen. It's automatically off (instant jumps) in the e-ink rendering modes. |
+| **Keep your place** | After a whole-screen turn, an orange bar and underline mark the last line you were reading for a few seconds. On scans without text, the old screen edge is marked. |
+| **Clickable words** | Click a word, or drag across several, to select. A small bar offers **Copy**, **Find** (in the document) and **Define** (web dictionary). Ctrl+C copies and Esc clears. Clicking blank space still turns pages. |
 | **Zoom** (+ / −, Ctrl+wheel, Ctrl+0) | Steps from Fit page through wider widths (in 10% steps of the screen) to full screen width. |
-| Page-at-a-time turning | No smooth scrolling. Clicks, arrow keys and the mouse wheel move a full page. |
+| Page-at-a-time turning | In Fit page and Two pages, and in all e-ink modes, the arrow keys, wheel and clicks on blank space move a full page with no animation. |
 | **Fit width** mode (W) | Pages wider than the screen are read in whole-screen steps, with a small overlap so you don't lose your line. |
 | Crop margins (C) | Removes white margins so the text gets larger. The crop stays the same from page to page, so the text size doesn't jump. |
 | 16 gray levels (M) | Matches what most e-ink panels can show, which avoids blotchy dithering by the panel. |

@@ -32,6 +32,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import webbrowser
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -45,7 +46,7 @@ import pymupdf
 from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageTk
 
 APP_NAME = "InkReader"
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 COPYRIGHT = "Copyright (C) 2026 Gautam1988"
 SOURCE_URL = "https://github.com/Gautam1988/inkreader"
 LICENSE_NOTICE = (
@@ -93,6 +94,9 @@ DEFAULTS = {
     "flash_every": 0,
     "overlap": 10,
     "tap_prev": 33,
+    "smooth_scroll": True,     # glide instead of jump (always off in e-ink modes)
+    "mark_place": True,        # after a screen turn, mark the line you were reading
+    "click_words": True,       # click / drag words to select: Copy, Find, Define
     "font_size": 12,
     "ui_size": 12,
     "show_toolbar": True,
@@ -106,7 +110,13 @@ DEFAULTS = {
     "positions": {},
 }
 DISPLAY_KEYS = ["page", "paper_brightness", "mode", "darkness", "black_point", "white_point", "threshold", "bold",
-                "quality", "keep_photos", "sharpen", "flash_every", "overlap", "tap_prev", "font_size"]
+                "quality", "keep_photos", "sharpen", "flash_every", "overlap", "tap_prev", "font_size",
+                "smooth_scroll", "mark_place", "click_words"]
+EINK_MODES = ("gray16", "bw", "dither")   # no animation on e-ink: every frame forces a panel refresh
+SCROLL_STEP = 0.12                        # mouse-wheel / arrow-key scroll, as a fraction of the screen
+SCREEN_ANIM_S = 0.30                      # glide time for a whole-screen turn
+WHEEL_ANIM_S = 0.16                       # glide time for a wheel notch
+MARK_S = 4.0                              # how long the "you were here" mark stays
 # Reading-pane styles: (label, paper colour, text colour). Off-white, slightly warm paper
 # avoids the glare of pure #FFFFFF while keeping near-black text for full contrast.
 PAPERS = {
@@ -149,12 +159,18 @@ GAP = 12
 
 HELP_TEXT = """\
 TURNING PAGES
-  Click right side, Right, Down, PgDn, Space, J   next page / screen
-  Click left side, Left, Up, PgUp, Backspace, K   previous page / screen
-  Mouse wheel                                     one page / screen per notch
+  Right, PgDn, Space, J, click right blank area   next page / screen
+  Left, PgUp, Backspace, K, click left blank area  previous page / screen
+  Mouse wheel, Down / Up    smooth scroll a few lines (Fit width / reading mode);
+                            one page per notch in Fit page
   Home / End                                      first / last page
   Ctrl+G                                          go to page number
-  Click a link                                    follow it
+  After a screen turn, an orange mark shows the last line you were reading.
+
+WORDS
+  Click a word              select it:  Copy  ·  Find  ·  Define
+  Drag across words         select several      Ctrl+C  copy selection
+  Click a link              follow it           Esc     clear selection
 
 VIEW
   W            cycle Fit page / Fit width / Two pages
@@ -416,14 +432,28 @@ class Document:
         self.pending = {}           # key -> Future of a background render
         self.page_bbox = {}
         self.doc_margins = None
+        self.words_cache = {}
 
     @property
     def page_count(self):
         return self.doc.page_count
 
+    def words(self, pno):
+        """Words of a page in reading order: [(Rect, text, block_no, line_no), ...]. UI thread only."""
+        w = self.words_cache.get(pno)
+        if w is None:
+            try:
+                raw = self.doc[pno].get_text("words")
+            except Exception:
+                raw = []
+            w = [(pymupdf.Rect(t[:4]), t[4], t[5], t[6]) for t in raw if t[4].strip()]
+            self.words_cache[pno] = w
+        return w
+
     def close(self):
         self.cache.clear()
         self.pending.clear()
+        self.words_cache.clear()
         try:
             self.doc.close()
         except Exception:
@@ -447,6 +477,7 @@ class Document:
         self.cache.clear()
         self.pending.clear()
         self.page_bbox.clear()
+        self.words_cache.clear()
         self.doc_margins = None
         if bookmark is not None:
             try:
@@ -681,6 +712,11 @@ class App:
         self.normal_view = None
         self.hint_until = 0.0
         self.toast_text, self.toast_until = "", 0.0
+        self.anim = None             # running smooth-scroll animation {from, to, t0, dur}
+        self.drawn_offset = 0.0      # offset the canvas items are currently drawn at
+        self.marker = None           # "you were reading here" mark {pno, rect | y, until}
+        self.sel = None              # selected words {pno, a, b} (indices into Document.words)
+        self.press = None            # mouse-down state for click vs drag
         self.display_win = None
         self.find_win = None
 
@@ -847,7 +883,9 @@ class App:
         self._layout_chrome()
 
         c = self.canvas
-        c.bind("<Button-1>", self.on_click)
+        c.bind("<ButtonPress-1>", self.on_press)
+        c.bind("<B1-Motion>", self.on_drag)
+        c.bind("<ButtonRelease-1>", self.on_release)
         c.bind("<MouseWheel>", self.on_wheel)
         c.bind("<Control-MouseWheel>", self.on_ctrl_wheel)
         c.bind("<Button-3>", self.on_context)
@@ -888,10 +926,12 @@ class App:
             r.bind(f"<Control-{letter}>", lambda e: (fn(), "break")[1])
             r.bind(f"<Control-{letter.upper()}>", lambda e: (fn(), "break")[1])
 
-        for seq in ("<Right>", "<Down>", "<Next>", "<space>", "j", "n"):
+        for seq in ("<Right>", "<Next>", "<space>", "j", "n"):
             key(seq, self.next_screen)
-        for seq in ("<Left>", "<Up>", "<Prior>", "<BackSpace>", "<Shift-space>", "k", "p"):
+        for seq in ("<Left>", "<Prior>", "<BackSpace>", "<Shift-space>", "k", "p"):
             key(seq, self.prev_screen)
+        key("<Down>", lambda: self.scroll_lines(+1))   # a few lines in Fit width, a page otherwise
+        key("<Up>", lambda: self.scroll_lines(-1))
         key("<Home>", lambda: self.goto(0))
         key("<End>", lambda: self.goto(self.doc.page_count - 1) if self.doc else None)
         key("w", self.cycle_view)
@@ -929,6 +969,7 @@ class App:
         ctrl("t", self.show_toc)
         ctrl("d", self.show_display)
         ctrl("q", lambda: (log("Ctrl+Q"), self.quit()))
+        ctrl("c", self.copy_selection)
 
     # -- opening / closing ----------------------------------------------------
 
@@ -1061,6 +1102,7 @@ class App:
         self.show()
 
     def show(self, flash_ok=False, focus=None):
+        self._stop_anim()
         if not self.doc:
             self.paint_empty()
             self.update_status()
@@ -1164,20 +1206,40 @@ class App:
         c.delete("all")
         c.config(bg=self.paper())
         scroll = self.offset if self.s["view"] == "width" else 0
+        self.drawn_offset = scroll
+        # everything attached to the page carries the "scroll" tag so it can glide together
         for r, x, y in self.placed:
-            c.create_image(x, y - scroll, image=r.get_photo(), anchor="nw")
+            c.create_image(x, y - scroll, image=r.get_photo(), anchor="nw", tags=("scroll",))
         self._draw_search_hits(scroll)
-        # static position marker for fit-width (no animation, just a bar)
+        self._draw_marker(scroll)
+        self._draw_selection(scroll)
+        self._draw_posbar()
+        if self.fullscreen:
+            self._draw_reading_info()
+        self.update_status()
+
+    def _draw_posbar(self):
+        """Thin position bar on the right edge in Fit width (shows where you are on the page)."""
+        c = self.canvas
+        c.delete("posbar")
         if self.s["view"] == "width" and self.placed:
             cw, ch = self._canvas_size()
             height = self.placed[0][0].img.height
             if height > ch:
                 top = ch * self.offset / height
                 bar = max(20, ch * ch / height)
-                c.create_rectangle(cw - 6, top, cw, min(ch, top + bar), fill=self.ink(), outline="")
-        if self.fullscreen:
-            self._draw_reading_info()
-        self.update_status()
+                c.create_rectangle(cw - 6, top, cw, min(ch, top + bar), fill=self.ink(), outline="",
+                                   tags=("posbar",))
+
+    def accent(self):
+        """Orange for marks and selections (lighter on the night page)."""
+        return "#ffa94d" if self.page_night else "#e8590c"
+
+    def _placed_for(self, pno):
+        for r, x, y in self.placed:
+            if r.pno == pno:
+                return r, x, y
+        return None, 0, 0
 
     # -- welcome screen (no document open) --------------------------------------
 
@@ -1429,6 +1491,9 @@ class App:
         image processing while the UI stays responsive. Finished pages get their Tk image here."""
         if not self.doc or not self.render_args:
             return
+        if self.anim or self.press:        # never stall a glide or a drag: try again shortly
+            self._later("prefetch", 120, self._prefetch_step)
+            return
         if self.prefetch_queue:
             p = self.prefetch_queue.pop(0)
             try:
@@ -1446,6 +1511,9 @@ class App:
         if not self.doc or self.busy:
             return
         pno = max(0, min(self.doc.page_count - 1, int(pno)))
+        self._stop_anim()
+        self.sel = None
+        self.marker = None
         self.page = pno
         self.offset = 0.0
         self.pending_offset = ("end",) if at_end else None
@@ -1462,13 +1530,93 @@ class App:
         return self.offset < height - ch - 0.5 if direction > 0 else self.offset > 0.5
 
     def _scroll(self, direction):
-        height = self.placed[0][0].img.height
+        """Whole-screen turn within a tall page; marks the line you were reading."""
         ch = self._canvas_size()[1]
         step = ch * (1 - self.s["overlap"] / 100.0)
-        self.offset = max(0.0, min(float(height - ch), self.offset + direction * step))
+        base = self.anim["to"] if self.anim else self.offset
+        self._set_marker(direction, base)
+        self.canvas.delete("marker")
+        if self.smooth_enabled():      # draw the mark now so it glides along with the page
+            self._draw_marker(self.drawn_offset)
         self.turns += 1
-        self.paint(flash_ok=True)
-        self.save_position()
+        self._scroll_to(base + direction * step, SCREEN_ANIM_S, flash_ok=True)
+
+    # -- smooth scrolling ---------------------------------------------------------
+
+    def smooth_enabled(self):
+        return bool(self.s["smooth_scroll"]) and self.s["mode"] not in EINK_MODES
+
+    def _max_offset(self):
+        if self.s["view"] != "width" or not self.placed:
+            return 0.0
+        return max(0.0, float(self.placed[0][0].img.height - self._canvas_size()[1]))
+
+    def _scroll_to(self, target, duration, flash_ok=False):
+        target = max(0.0, min(self._max_offset(), target))
+        if not self.smooth_enabled():
+            self._stop_anim()
+            self.offset = target
+            self.paint(flash_ok=flash_ok)
+            self._arm_marker_expiry()
+            self.save_position()
+            return
+        self.anim = {"from": self.offset, "to": target, "t0": time.monotonic(), "dur": duration}
+        if "anim" not in self.jobs:
+            self._anim_step()
+
+    def _anim_step(self):
+        a = self.anim
+        if not a:
+            return
+        t = min(1.0, (time.monotonic() - a["t0"]) / a["dur"])
+        eased = 1 - (1 - t) ** 3                       # ease-out: quick start, gentle stop
+        self.offset = a["from"] + (a["to"] - a["from"]) * eased
+        c = self.canvas
+        if not c.find_withtag("scroll"):               # nothing drawn yet: draw fresh
+            self._draw()
+        else:
+            c.move("scroll", 0, self.drawn_offset - self.offset)
+            self.drawn_offset = self.offset
+            self._draw_posbar()
+        if t < 1.0:
+            self._later("anim", 15, self._anim_step)
+        else:
+            self.anim = None
+            self.offset = a["to"]
+            self._arm_marker_expiry()
+            self.save_position()
+
+    def _stop_anim(self):
+        if self.anim:
+            self.offset = self.anim["to"]
+            self.anim = None
+        job = self.jobs.pop("anim", None)
+        if job:
+            self.root.after_cancel(job)
+
+    def _arm_marker_expiry(self):
+        if self.marker:
+            self._later("marker", int(MARK_S * 1000), self._expire_marker)
+
+    def scroll_lines(self, direction):
+        """Wheel / arrow keys: smooth scroll of a few lines; past the page edge, turn the page."""
+        if not self.doc or self.busy:
+            return
+        if self.s["view"] != "width" or self._max_offset() <= 0 or not self.smooth_enabled():
+            (self.next_screen if direction > 0 else self.prev_screen)()
+            return
+        base = self.anim["to"] if self.anim else self.offset
+        limit = self._max_offset()
+        if (direction > 0 and base >= limit - 0.5) or (direction < 0 and base <= 0.5):
+            now = time.monotonic()                     # at the edge: one deliberate turn, not a skid
+            if now - self.last_wheel < 0.45:
+                return
+            self.last_wheel = now
+            (self.next_screen if direction > 0 else self.prev_screen)()
+            return
+        self.last_wheel = time.monotonic()
+        step = self._canvas_size()[1] * SCROLL_STEP
+        self._scroll_to(base + direction * step, WHEEL_ANIM_S)
 
     def next_screen(self):
         if not self.doc or self.busy:
@@ -1545,15 +1693,64 @@ class App:
                 return True
         return False
 
-    def on_click(self, e):
+    def on_press(self, e):
+        self.canvas.focus_set()
+        self.press = {"x": e.x, "y": e.y, "drag": False,
+                      "word": self._word_at(e.x, e.y) if self.doc else None}
+
+    def on_drag(self, e):
+        p = self.press
+        if not p or not p["word"]:
+            return
+        if not p["drag"] and abs(e.x - p["x"]) + abs(e.y - p["y"]) < 6:
+            return
+        p["drag"] = True
+        hit = self._word_at(e.x, e.y)
+        pno, a = p["word"]
+        if hit and hit[0] == pno:          # selection stays within one page
+            b = hit[1]
+        elif self.sel:
+            b = self.sel["b"]
+        else:
+            b = a
+        self.sel = {"pno": pno, "a": a, "b": b}
+        self.canvas.delete("selection")
+        self.canvas.delete("wordbar")
+        self._draw_selection(self.drawn_offset)
+
+    def on_release(self, e):
+        p, self.press = self.press, None
+        if p and p["drag"]:                # finished a drag-selection: show Copy / Find / Define
+            self.canvas.delete("selection")
+            self._draw_selection(self.drawn_offset)
+            return
+        self.on_click(e, p["word"] if p else None)
+
+    def on_click(self, e, word=None):
         self.canvas.focus_set()
         if not self.doc:
             self._welcome_click()
             return
+        tags = set()
+        for item in self.canvas.find_withtag("current"):
+            tags.update(self.canvas.gettags(item))
+        for t in ("wb_copy", "wb_find", "wb_define"):
+            if t in tags:
+                self._word_action(t)
+                return
         if self.overlay:   # first click on the page just tucks the toolbar away
             self._hide_overlay()
             return
         if self.busy or self._follow_link(e.x, e.y):
+            return
+        if word:                            # click on a word: select it
+            self.sel = {"pno": word[0], "a": word[1], "b": word[1]}
+            self.canvas.delete("selection")
+            self.canvas.delete("wordbar")
+            self._draw_selection(self.drawn_offset)
+            return
+        if self.sel:                        # click elsewhere just dismisses the selection
+            self.clear_selection()
             return
         cw, ch = self._canvas_size()
         if e.y < ch * 0.07 and cw * 0.3 < e.x < cw * 0.7:
@@ -1564,6 +1761,10 @@ class App:
             self.next_screen()
 
     def on_wheel(self, e):
+        if (self.doc and self.s["view"] == "width" and self._max_offset() > 0
+                and self.smooth_enabled()):
+            self.scroll_lines(+1 if e.delta < 0 else -1)
+            return
         now = time.monotonic()
         if now - self.last_wheel < 0.25:
             return
@@ -1790,11 +1991,23 @@ class App:
         if self.fullscreen:
             self._later("cursor", 1800, hide)
 
+    def _pointer_cursor(self, x, y):
+        """I-beam over words (they can be selected), hand over the word bar, arrow elsewhere."""
+        if not self.doc:
+            return ""
+        for item in self.canvas.find_withtag("current"):
+            if "wordbar" in self.canvas.gettags(item):
+                return "hand2"
+        return "xterm" if self._word_at(x, y) else ""
+
     def on_motion(self, e):
+        if not self.doc:                   # welcome screen manages its own hover cursors
+            return
+        want = self._pointer_cursor(e.x, e.y)
+        if self.canvas.cget("cursor") != want:
+            self.canvas.config(cursor=want)
         if not self.fullscreen:
             return
-        if self.canvas.cget("cursor"):
-            self.canvas.config(cursor="")
         self._arm_cursor_hide()
         if e.y <= 6:
             self._show_overlay()
@@ -1829,7 +2042,9 @@ class App:
                                            outline=pal["fg"]), t)
 
     def escape(self):
-        if self.overlay:
+        if self.sel:
+            self.clear_selection()
+        elif self.overlay:
             self._hide_overlay()
         elif self.search:
             self.search = None
@@ -1952,8 +2167,10 @@ class App:
             if not self.doc:
                 self.paint_empty()
             self._later("apply", 50, self.refresh_view)
-        elif key in ("flash_every", "overlap", "tap_prev"):
+        elif key in ("flash_every", "overlap", "tap_prev", "smooth_scroll", "mark_place"):
             pass
+        elif key == "click_words":
+            self.clear_selection()
         else:
             self._later("apply", 300, self.refresh_view)
 
@@ -2024,6 +2241,9 @@ class App:
         scale(right, "flash_every", "Full refresh flash every N turns (0 = off)", 0, 20)
         scale(right, "overlap", "Fit-width overlap between screens (%)", 0, 40)
         scale(right, "tap_prev", "Left click zone for 'previous' (% width)", 10, 50)
+        check(right, "smooth_scroll", "Smooth scrolling (off in e-ink modes)")
+        check(right, "mark_place", "Mark the line I was reading after a screen turn")
+        check(right, "click_words", "Click words to select (Copy / Find / Define)")
         scale(right, "ui_size", "Toolbar text size", 9, 24)
         check(right, "show_status", "Show status bar")
 
@@ -2129,7 +2349,180 @@ class App:
                 x0, y0, x1, y1 = self._to_canvas_rect(r, rect)
                 width = 4 if (r.pno, i) == cur else 2
                 self.canvas.create_rectangle(x + x0 - 3, y - scroll + y0 - 3, x + x1 + 3, y - scroll + y1 + 3,
-                                             outline=self.page_ink(), width=width)
+                                             outline=self.page_ink(), width=width, tags=("scroll",))
+
+    # -- "you were reading here" mark -------------------------------------------
+
+    def _set_marker(self, direction, base):
+        """Before a screen turn, remember the last fully visible line (or the first, going back)."""
+        self.marker = None
+        if not self.s["mark_place"] or not self.placed:
+            return
+        r, x, y = self.placed[0]
+        ch = self._canvas_size()[1]
+        top, bottom = base - y, base - y + ch          # visible band in image pixels
+        lines = {}
+        for rect, _t, b, ln in self.doc.words(r.pno):
+            x0, y0, x1, y1 = self._to_canvas_rect(r, rect)
+            key = (b, ln)
+            if key in lines:
+                u = lines[key]
+                lines[key] = (min(u[0], x0), min(u[1], y0), max(u[2], x1), max(u[3], y1))
+            else:
+                lines[key] = (x0, y0, x1, y1)
+        best = None
+        for u in lines.values():
+            if direction > 0 and u[3] <= bottom + 1 and u[1] >= top + (bottom - top) * 0.4:
+                if best is None or u[3] > best[3]:
+                    best = u
+            elif direction < 0 and u[1] >= top - 1 and u[3] <= top + (bottom - top) * 0.6:
+                if best is None or u[1] < best[1]:
+                    best = u
+        if best:
+            self.marker = {"pno": r.pno, "box": best}
+        else:   # no text layer (e.g. a scan): mark the old screen edge instead
+            self.marker = {"pno": r.pno, "edge": bottom if direction > 0 else top}
+
+    def _draw_marker(self, scroll):
+        m = self.marker
+        if not m:
+            return
+        r, x, y = self._placed_for(m["pno"])
+        if r is None:
+            return
+        c, col = self.canvas, self.accent()
+        tags = ("scroll", "marker")
+        if "box" in m:
+            x0, y0, x1, y1 = m["box"]
+            top, bot = y - scroll + y0, y - scroll + y1
+            c.create_rectangle(x + x0 - 16, top - 1, x + x0 - 10, bot + 1, fill=col, outline="", tags=tags)
+            c.create_line(x + x0, bot + 3, x + x1, bot + 3, fill=col, width=2, tags=tags)
+        else:
+            ey = y - scroll + m["edge"]
+            c.create_line(x, ey, x + r.img.width, ey, fill=col, width=2, dash=(8, 5), tags=tags)
+            c.create_polygon(x, ey - 7, x + 10, ey, x, ey + 7, fill=col, outline="", tags=tags)
+
+    def _expire_marker(self):
+        self.marker = None
+        self.canvas.delete("marker")
+
+    # -- word selection -----------------------------------------------------------
+
+    def _word_at(self, x, y):
+        """(pno, index) of the word under canvas point x, y, or None."""
+        if not self.doc or not self.s["click_words"]:
+            return None
+        pno, pt = self._hit(x, y)
+        if pno is None:
+            return None
+        for i, (rect, _t, _b, _l) in enumerate(self.doc.words(pno)):
+            if rect.x0 - 1 <= pt.x <= rect.x1 + 1 and rect.y0 - 1 <= pt.y <= rect.y1 + 1:
+                return pno, i
+        return None
+
+    def selected_text(self):
+        if not self.sel:
+            return ""
+        words = self.doc.words(self.sel["pno"])
+        a, b = sorted((self.sel["a"], self.sel["b"]))
+        out, last_line = [], None
+        for rect, text, blk, ln in words[a:b + 1]:
+            if out and out[-1].endswith("-") and (blk, ln) != last_line:
+                out[-1] = out[-1][:-1] + text          # re-join a word hyphenated across lines
+            else:
+                out.append(text)
+            last_line = (blk, ln)
+        return " ".join(out)
+
+    def _draw_selection(self, scroll):
+        if not self.sel:
+            return
+        r, x, y = self._placed_for(self.sel["pno"])
+        if r is None:
+            return
+        c = self.canvas
+        words = self.doc.words(self.sel["pno"])
+        a, b = sorted((self.sel["a"], self.sel["b"]))
+        # one continuous band per line (no gaps between words), like a highlighter pen
+        bands = {}
+        for rect, _t, blk, ln in words[a:b + 1]:
+            x0, y0, x1, y1 = self._to_canvas_rect(r, rect)
+            u = bands.get((blk, ln))
+            bands[(blk, ln)] = (x0, y0, x1, y1) if u is None else \
+                (min(u[0], x0), min(u[1], y0), max(u[2], x1), max(u[3], y1))
+        self._sel_photos = []
+        tags = ("scroll", "selection")
+        for x0, y0, x1, y1 in bands.values():
+            box = (max(0, int(x0) - 2), max(0, int(y0) - 1),
+                   min(r.img.width, int(x1) + 2), min(r.img.height, int(y1) + 2))
+            if box[2] <= box[0] or box[3] <= box[1]:
+                continue
+            photo = ImageTk.PhotoImage(self._highlight(r.img.crop(box)))
+            self._sel_photos.append(photo)            # keep a reference or Tk drops the image
+            c.create_image(x + box[0], y - scroll + box[1], image=photo, anchor="nw", tags=tags)
+        if not (self.press and self.press.get("drag")):
+            self._draw_word_bar(r, x, y - scroll, words[a][0], words[b][0], b - a + 1)
+
+    def _highlight(self, crop):
+        """Tint a piece of the page like a highlighter: paper turns orange, text stays crisp."""
+        crop = crop.convert("RGB")
+        if self.page_night:                          # light text on black: lift the paper instead
+            return Image.blend(crop, Image.new("RGB", crop.size, (255, 169, 77)), 0.35)
+        return ImageChops.multiply(crop, Image.new("RGB", crop.size, (255, 196, 128)))
+
+    def _draw_word_bar(self, r, x, y, first_rect, last_rect, count):
+        """Small floating bar next to the selection: Copy · Find · Define."""
+        c = self.canvas
+        f = self.font_small
+        actions = [("Copy", "wb_copy"), ("Find", "wb_find")] + ([("Define", "wb_define")] if count <= 3 else [])
+        pad, gap = 12, 2
+        widths = [f.measure(t) + 2 * pad for t, _ in actions]
+        h = f.metrics("linespace") + 12
+        total = sum(widths) + gap * (len(actions) - 1)
+        fx0, fy0, _fx1, _fy1 = self._to_canvas_rect(r, first_rect)
+        _lx0, _ly0, _lx1, ly1 = self._to_canvas_rect(r, last_rect)
+        bx = x + fx0
+        by = y + fy0 - h - 8
+        if by < 4:                                   # no room above: put it under the selection
+            by = y + ly1 + 10
+        cw = self._canvas_size()[0]
+        bx = max(6, min(bx, cw - total - 6))
+        tags = ("scroll", "wordbar")
+        c.create_rectangle(bx - 2, by - 2, bx + total + 2, by + h + 2, fill="#202020", outline="#202020",
+                           tags=tags)
+        for (label, tag), w in zip(actions, widths):
+            c.create_rectangle(bx, by, bx + w, by + h, fill="#2d2d2d", outline="", tags=tags + (tag, tag + "_bg"))
+            c.create_text(bx + w / 2, by + h / 2, text=label, fill="#ffffff", font=f, tags=tags + (tag,))
+            bx += w + gap
+
+    def clear_selection(self):
+        if self.sel:
+            self.sel = None
+            self.canvas.delete("selection")
+            self.canvas.delete("wordbar")
+
+    def copy_selection(self):
+        text = self.selected_text()
+        if text:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.note("Copied: " + (text if len(text) < 60 else text[:57] + "..."))
+
+    def _word_action(self, tag):
+        text = self.selected_text()
+        if tag != "wb_copy":               # Find / Define want the bare word, not "paper." or "(word"
+            text = text.strip(" .,;:!?\"'()[]{}<>“”‘’—–-")
+        if not text:
+            return
+        if tag == "wb_copy":
+            self.copy_selection()
+            self.clear_selection()
+        elif tag == "wb_find":
+            self.clear_selection()
+            self.find_next(text)
+        elif tag == "wb_define":
+            self.clear_selection()
+            webbrowser.open("https://www.bing.com/search?q=" + urllib.parse.quote("define " + text))
 
 
 def log(msg):
