@@ -46,7 +46,7 @@ import pymupdf
 from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageTk
 
 APP_NAME = "InkReader"
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 COPYRIGHT = "Copyright (C) 2026 Gautam1988"
 SOURCE_URL = "https://github.com/Gautam1988/inkreader"
 LICENSE_NOTICE = (
@@ -117,6 +117,7 @@ SCROLL_STEP = 0.12                        # mouse-wheel / arrow-key scroll, as a
 SCREEN_ANIM_S = 0.30                      # glide time for a whole-screen turn
 WHEEL_ANIM_S = 0.16                       # glide time for a wheel notch
 MARK_S = 4.0                              # how long the "you were here" mark stays
+EXPLAIN_MAX_CHARS = 1500                  # longest selection sent to Google AI Mode
 # Reading-pane styles: (label, paper colour, text colour). Off-white, slightly warm paper
 # avoids the glare of pure #FFFFFF while keeping near-black text for full contrast.
 PAPERS = {
@@ -168,8 +169,10 @@ TURNING PAGES
   After a screen turn, an orange mark shows the last line you were reading.
 
 WORDS
-  Click a word              select it:  Copy  ·  Find  ·  Define
-  Drag across words         select several      Ctrl+C  copy selection
+  Click a word              select it:  Copy  ·  Find  ·  Explain  ·  Define
+  Double-click a word       select the whole sentence
+  Drag across words         select any phrase   Ctrl+C  copy selection
+  Explain                   opens Google AI Mode to explain the selection
   Click a link              follow it           Esc     clear selection
 
 VIEW
@@ -717,6 +720,7 @@ class App:
         self.marker = None           # "you were reading here" mark {pno, rect | y, until}
         self.sel = None              # selected words {pno, a, b} (indices into Document.words)
         self.press = None            # mouse-down state for click vs drag
+        self.double_click = False    # a double-click just selected a sentence: ignore its release
         self.display_win = None
         self.find_win = None
 
@@ -886,6 +890,7 @@ class App:
         c.bind("<ButtonPress-1>", self.on_press)
         c.bind("<B1-Motion>", self.on_drag)
         c.bind("<ButtonRelease-1>", self.on_release)
+        c.bind("<Double-Button-1>", self.on_double)
         c.bind("<MouseWheel>", self.on_wheel)
         c.bind("<Control-MouseWheel>", self.on_ctrl_wheel)
         c.bind("<Button-3>", self.on_context)
@@ -1718,7 +1723,41 @@ class App:
         self.canvas.delete("wordbar")
         self._draw_selection(self.drawn_offset)
 
+    def on_double(self, e):
+        """Double-click a word: select its whole sentence."""
+        hit = self._word_at(e.x, e.y)
+        if not hit:
+            return
+        self.double_click = True           # the second click's release must not reset this
+        self.press = None
+        a, b = self._sentence_around(*hit)
+        self.sel = {"pno": hit[0], "a": a, "b": b}
+        self.canvas.delete("selection")
+        self.canvas.delete("wordbar")
+        self._draw_selection(self.drawn_offset)
+
+    def _sentence_around(self, pno, i):
+        """Word index range of the sentence containing word i (stops at . ! ? and at paragraph ends)."""
+        words = self.doc.words(pno)
+
+        def ends_sentence(text):
+            t = text.rstrip("\"'”’)]")
+            return t.endswith((".", "!", "?", "…")) and not re.fullmatch(r"(?:[A-Za-z]\.){1,3}", t) \
+                and t.lower() not in ("e.g.", "i.e.", "etc.", "vs.", "dr.", "mr.", "mrs.", "ms.", "fig.", "no.")
+        block = words[i][2]
+        a = i
+        while a > 0 and words[a - 1][2] == block and not ends_sentence(words[a - 1][1]):
+            a -= 1
+        b = i
+        while b < len(words) - 1 and words[b + 1][2] == block and not ends_sentence(words[b][1]):
+            b += 1
+        return a, b
+
     def on_release(self, e):
+        if self.double_click:              # release of a double-click: sentence already selected
+            self.double_click = False
+            self.press = None
+            return
         p, self.press = self.press, None
         if p and p["drag"]:                # finished a drag-selection: show Copy / Find / Define
             self.canvas.delete("selection")
@@ -1734,7 +1773,7 @@ class App:
         tags = set()
         for item in self.canvas.find_withtag("current"):
             tags.update(self.canvas.gettags(item))
-        for t in ("wb_copy", "wb_find", "wb_define"):
+        for t in ("wb_copy", "wb_find", "wb_explain", "wb_define"):
             if t in tags:
                 self._word_action(t)
                 return
@@ -2474,7 +2513,8 @@ class App:
         """Small floating bar next to the selection: Copy · Find · Define."""
         c = self.canvas
         f = self.font_small
-        actions = [("Copy", "wb_copy"), ("Find", "wb_find")] + ([("Define", "wb_define")] if count <= 3 else [])
+        actions = [("Copy", "wb_copy"), ("Find", "wb_find"), ("Explain ✦", "wb_explain")] + \
+            ([("Define", "wb_define")] if count <= 3 else [])
         pad, gap = 12, 2
         widths = [f.measure(t) + 2 * pad for t, _ in actions]
         h = f.metrics("linespace") + 12
@@ -2510,6 +2550,10 @@ class App:
 
     def _word_action(self, tag):
         text = self.selected_text()
+        if tag == "wb_explain":            # Google AI Mode explains the selection in plain language
+            self.clear_selection()
+            self.explain(text)
+            return
         if tag != "wb_copy":               # Find / Define want the bare word, not "paper." or "(word"
             text = text.strip(" .,;:!?\"'()[]{}<>“”‘’—–-")
         if not text:
@@ -2523,6 +2567,17 @@ class App:
         elif tag == "wb_define":
             self.clear_selection()
             webbrowser.open("https://www.bing.com/search?q=" + urllib.parse.quote("define " + text))
+
+    def explain(self, text):
+        """Open Google AI Mode (udm=50) asking for a plain-language explanation of the text."""
+        text = " ".join(text.split())
+        if not text:
+            return
+        if len(text) > EXPLAIN_MAX_CHARS:          # keep the URL a sensible length
+            text = text[:EXPLAIN_MAX_CHARS].rsplit(" ", 1)[0] + " ..."
+        prompt = f'Explain this in simple terms: "{text}"'
+        webbrowser.open("https://www.google.com/search?udm=50&q=" + urllib.parse.quote(prompt))
+        self.note("Opening Google AI Mode...")
 
 
 def log(msg):

@@ -2,7 +2,7 @@
 
 **A calm PDF and e-book reader for Windows, built for e-ink monitors and tired eyes.**
 
-Ordinary readers like Acrobat draw thin gray text on glaring white and surround the page with toolbars. On an e-ink monitor (Dasung Paperlike, Boox Mira, an e-ink tablet used as a second screen) that means faint, ghosting pages. On a normal LCD it tires your eyes. InkReader shows dark, sharp text on soft warm paper and has a full-screen reading mode with nothing else on screen. It scrolls with gentle glides that mark the line you were reading (or instant page turns on e-ink), and you can click any word to copy, find or define it.
+Ordinary readers like Acrobat draw thin gray text on glaring white and surround the page with toolbars. On an e-ink monitor (Dasung Paperlike, Boox Mira, an e-ink tablet used as a second screen) that means faint, ghosting pages. On a normal LCD it tires your eyes. InkReader shows dark, sharp text on soft warm paper and has a full-screen reading mode with nothing else on screen. It scrolls with gentle glides that mark the line you were reading (or instant page turns on e-ink), and you can click any word, or double-click a sentence, to copy, find, define or get it explained by Google AI Mode.
 
 Free and open source under the [GNU AGPL v3](LICENSE).
 
@@ -40,7 +40,7 @@ Supported formats: PDF, EPUB, MOBI, FB2, XPS, CBZ.
 | **High resolution** (Q) | Pages are drawn at 2× (or 3×) the screen resolution and scaled down with a sharp filter. Bold text is applied at the higher resolution, which gives cleaner, more even strokes. The image processing runs on a background thread, so upcoming pages are prepared while you read. |
 | **Smooth scrolling** | In Fit width and reading mode, the mouse wheel and ↑/↓ glide a few lines; Space, PgDn and → glide a whole screen. It's automatically off (instant jumps) in the e-ink rendering modes. |
 | **Keep your place** | After a whole-screen turn, an orange bar and underline mark the last line you were reading for a few seconds. On scans without text, the old screen edge is marked. |
-| **Clickable words** | Click a word, or drag across several, to select. A small bar offers **Copy**, **Find** (in the document) and **Define** (web dictionary). Ctrl+C copies and Esc clears. Clicking blank space still turns pages. |
+| **Clickable words** | Click a word, **double-click to select its whole sentence**, or drag across any phrase. A small bar offers **Copy**, **Find** (in the document), **Explain ✦** (opens **Google AI Mode** with a plain-language explanation of the selection) and **Define** (web dictionary, for 1–3 words). Ctrl+C copies and Esc clears. Clicking blank space still turns pages. |
 | **Zoom** (+ / −, Ctrl+wheel, Ctrl+0) | Steps from Fit page through wider widths (in 10% steps of the screen) to full screen width. |
 | Page-at-a-time turning | In Fit page and Two pages, and in all e-ink modes, the arrow keys, wheel and clicks on blank space move a full page with no animation. |
 | **Fit width** mode (W) | Pages wider than the screen are read in whole-screen steps, with a small overlap so you don't lose your line. |

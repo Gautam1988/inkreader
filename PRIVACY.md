@@ -1,6 +1,6 @@
 # InkReader privacy policy
 
-*Last updated: 9 November 2026*
+*Last updated: 10 November 2026*
 
 InkReader is a document reader that runs entirely on your computer. **It does not collect, store, send or share any personal information.**
 
@@ -23,6 +23,7 @@ InkReader has no accounts, analytics, telemetry, advertising or tracking, and it
 - a web link inside a document (InkReader asks before opening it)
 - **Source on GitHub** or **Source code**, which open the project page on github.com. GitHub's own privacy statement applies there.
 - **Define** on a word you selected, which opens a Bing web search for "define <word>" in your browser. Only that word or phrase is sent, and only when you click Define. Microsoft's privacy statement applies there.
+- **Explain** on text you selected, which opens Google AI Mode in your browser with the request *Explain this in simple terms: "<your selection>"* (up to 1,500 characters). Only the text you selected is sent, and only when you click Explain. Google's privacy policy applies there. Don't use Explain on confidential text.
 
 ## Children
 
