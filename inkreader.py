@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # InkReader - a calm PDF and e-book reader for e-ink monitors and tired eyes.
-# Copyright (C) 2026 Gautam1988
+# Copyright (C) 2026 GautamMohan
 #
 # This program is free software: you can redistribute it and/or modify it under
 # the terms of the GNU Affero General Public License as published by the Free
@@ -46,8 +46,8 @@ import pymupdf
 from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageTk
 
 APP_NAME = "InkReader"
-VERSION = "1.8.0"
-COPYRIGHT = "Copyright (C) 2026 Gautam1988"
+VERSION = "1.8.1"
+COPYRIGHT = "Copyright (C) 2026 GautamMohan"
 SOURCE_URL = "https://github.com/Gautam1988/inkreader"
 LICENSE_NOTICE = (
     "InkReader is free software under the GNU Affero General Public License v3 or later.\n"

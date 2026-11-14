@@ -87,7 +87,7 @@ It is built with [PyMuPDF](https://pymupdf.readthedocs.io/) (the MuPDF rendering
 
 ## License
 
-Copyright (C) 2026 Gautam1988
+Copyright (C) 2026 GautamMohan
 
 InkReader is free software: you can redistribute it and/or modify it under the terms of the [GNU Affero General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY.
 

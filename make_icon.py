@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Gautam1988
+# Copyright (C) 2026 GautamMohan
 """Draws the InkReader icon (a page with text lines and a folded corner).
 
 `python make_icon.py` writes inkreader.ico; `draw(size)` is reused for the Store tiles.

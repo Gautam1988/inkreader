@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Gautam1988
+# Copyright (C) 2026 GautamMohan
 """Generates the MSIX tile and logo images (with scale / target-size variants) into a folder.
 
 Usage: python make_store_assets.py <out_dir>

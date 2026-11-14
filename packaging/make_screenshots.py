@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Gautam1988
+# Copyright (C) 2026 GautamMohan
 """Makes Microsoft Store screenshots (1366x768) of InkReader with a sample book.
 
 The app window is placed off-screen as a tool window (no taskbar button), and only that window is

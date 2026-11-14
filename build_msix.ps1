@@ -9,12 +9,12 @@
 #
 # Store build - copy the three values from Partner Center > your app > Product identity:
 #   powershell -ExecutionPolicy Bypass -File build_msix.ps1 `
-#       -IdentityName "12345Gautam1988.InkReader" -Publisher "CN=XXXXXXXX-XXXX-..." -PublisherDisplayName "Gautam1988"
+#       -IdentityName "Aexonlab.InkReader" -Publisher "CN=XXXXXXXX-XXXX-..." -PublisherDisplayName "Aexonlab"
 # Upload the resulting dist\InkReader-<version>-x64.msix in Partner Center; the Store signs it.
 param(
     [string]$IdentityName = "InkReader.LocalTest",
     [string]$Publisher = "CN=InkReaderLocalTest",
-    [string]$PublisherDisplayName = "Gautam1988"
+    [string]$PublisherDisplayName = "GautamMohan"
 )
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
