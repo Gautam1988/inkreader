@@ -46,7 +46,7 @@ import pymupdf
 from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageTk
 
 APP_NAME = "InkReader"
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 COPYRIGHT = "Copyright (C) 2026 Gautam1988"
 SOURCE_URL = "https://github.com/Gautam1988/inkreader"
 LICENSE_NOTICE = (
@@ -67,8 +67,9 @@ MODES = [
     ("gray16", "16 gray levels (e-ink)"),
     ("bw", "Black & white (sharpest text)"),
     ("dither", "Dithered B&W (photos)"),
+    ("color", "Full color (photos, charts)"),
 ]
-MODE_SHORT = {"gray": "Gray", "gray16": "16-gray", "bw": "B&W", "dither": "Dither"}
+MODE_SHORT = {"gray": "Gray", "gray16": "16-gray", "bw": "B&W", "dither": "Dither", "color": "Color"}
 VIEWS = [("page", "Fit page"), ("width", "Fit width"), ("two", "Two pages")]
 VIEW_LABEL = dict(VIEWS)
 
@@ -77,7 +78,8 @@ DEFAULTS = {
     "crop": True,
     "rotation": 0,
     "schema": 2,
-    "mode": "gray",            # gray16 / bw suit e-ink panels; gray is smoothest on LCDs
+    "mode": "gray",            # gray16 / bw suit e-ink panels; gray is smoothest on LCDs; color = true colors
+    "mode_before_color": "gray",  # where the Color toggle returns to
     "subpixel": "rgb",         # LCD subpixel text: rgb / bgr / off (off for e-ink)
     "width_pct": 100,          # page width in Fit width, % of the screen
     "darkness": 1.6,
@@ -188,7 +190,8 @@ VIEW
   Ctrl+wheel   zoom                Ctrl+0  full screen width
 
 E-INK
-  M            cycle Gray / 16-gray / Black & white / Dithered
+  M            cycle Gray / 16-gray / Black & white / Dithered / Color
+  K            full color on / off (for color photos and charts)
   B            cycle bold text 0-3
   [ / ]        lighter / darker text
   I            paper: warm / soft white / sepia / gray / pure white / night
@@ -360,9 +363,39 @@ def subpixel_post(gray, proc, ss, order):
     return rgb.point(_tint_lut(paper, ink))
 
 
+def _smart_invert(img):
+    """Night look for color pages: invert lightness but keep each color's hue (blue stays blue)."""
+    h, s, v = ImageOps.invert(img).convert("HSV").split()
+    h = h.point(lambda x: (x + 128) % 256)            # inverting turned every hue by 180 degrees
+    return Image.merge("HSV", (h, s, v)).convert("RGB")
+
+
+def process_color(img, proc, ss, photo_boxes):
+    """Full-color page: true colors, white paper tinted to the chosen paper style. Pillow only."""
+    if ss > 1:
+        img = img.resize((max(1, round(img.width / ss)), max(1, round(img.height / ss))),
+                         Image.LANCZOS, reducing_gap=2.0)
+    if proc[8]:                                        # sharpen, gentler than for gray text
+        img = img.filter(ImageFilter.UnsharpMask(radius=0.8, percent=30 * proc[8], threshold=2))
+    paper, ink = page_colors(proc[10], proc[11])
+    if proc[6]:                                        # night paper
+        orig = img
+        img = ImageChops.multiply(_smart_invert(img), Image.new("RGB", img.size, ink))
+        for x0, y0, x1, y1 in photo_boxes:            # photos keep their natural look
+            # 1 px inside the photo edge, so no sliver of white page shows around it
+            box = (x0 + 1, y0 + 1, min(img.width, x1 - 1), min(img.height, y1 - 1))
+            if box[2] - box[0] >= 24 and box[3] - box[1] >= 24:
+                img.paste(orig.crop(box), box)
+    elif paper != (255, 255, 255):                     # white paper -> warm / sepia / ... paper
+        img = ImageChops.multiply(img, Image.new("RGB", img.size, paper))
+    return img
+
+
 def finish_render(job):
     """Second render stage: pure Pillow image processing, safe to run on the worker thread."""
     pno, gray, mat, ox, oy, proc, ss, kind, photo_boxes = job
+    if kind == "color":
+        return Rendered(pno, process_color(gray, proc, ss, photo_boxes), mat, ox, oy)
     if kind in ("rgb", "bgr"):
         img = subpixel_post(gray, proc, ss, kind)
     else:
@@ -607,6 +640,15 @@ class Document:
         mat = pymupdf.Matrix(scale, scale).prerotate(rotation)
         kind = proc[12] if proc[4] == "gray" else "off"
         ss = max(1, int(proc[7]))
+        if proc[4] == "color":   # full color: RGB raster, supersampled like the gray path
+            while ss > 1 and (w * scale * ss) * (h * scale * ss) > MAX_RENDER_PIXELS:
+                ss -= 1
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(scale * ss, scale * ss).prerotate(rotation),
+                                  clip=clip, colorspace=pymupdf.csRGB, alpha=False)
+            ox, oy = pix.x / ss, pix.y / ss
+            boxes = self._photo_boxes(page, clip, mat, ox, oy) if proc[6] and proc[9] else []
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples, "raw", "RGB", pix.stride)
+            return (pno, img, mat, ox, oy, proc, ss, "color", boxes)
         if kind in ("rgb", "bgr") and (w * scale * 3) * (h * scale) <= MAX_SUBPIXEL_PIXELS:
             while ss > 1 and (w * scale * 3 * ss) * (h * scale * ss) > MAX_SUBPIXEL_PIXELS:
                 ss -= 1
@@ -851,6 +893,7 @@ class App:
             if isinstance(w, tk.Toplevel):
                 self.finish_window(w)
         self._set_toggle(self.b_crop, self.s["crop"])
+        self._set_toggle(self.b_color, self.s["mode"] == "color")
 
     # -- UI construction ------------------------------------------------------
 
@@ -871,11 +914,10 @@ class App:
         self._btn(tb, "▶", self.next_screen)
         self.b_view = self._btn(tb, VIEW_LABEL[self.s["view"]], self.cycle_view)
         self.b_crop = self._btn(tb, "Crop", self.toggle_crop)
-        self._btn(tb, "Rotate", self.rotate)
         self._btn(tb, "Find", self.show_find)
         self._btn(tb, "Paper", self.cycle_paper)
+        self.b_color = self._btn(tb, "Color", self.toggle_color)
         self._btn(tb, "Display", self.show_display)
-        self._btn(tb, "Refresh", self.flash_refresh)
         self.b_full = self._btn(tb, "Reading mode", self.toggle_fullscreen)
         self._btn(tb, "?", self.show_help)
         self.rule = tk.Frame(self.root, bg="black", height=2)
@@ -947,6 +989,7 @@ class App:
         key("q", self.cycle_quality)
         key("b", self.cycle_bold)
         key("m", self.cycle_mode)
+        key("k", self.toggle_color)
         key("f", self.toggle_fullscreen)
         key("t", self.toggle_toolbar)
         key("h", self.toggle_reading_info)
@@ -1440,9 +1483,12 @@ class App:
         self.total_label.config(text=f"/ {n}")
         self.b_view.config(text=self.view_label())
         self._set_toggle(self.b_crop, self.s["crop"])
+        self._set_toggle(self.b_color, self.s["mode"] == "color")
         pct = int(round(100 * (shown[-1] + 1) / n))
         parts = [os.path.basename(self.doc.path), f"Page {label} of {n}", f"{pct}%",
-                 self.view_label(), MODE_SHORT.get(self.s["mode"], ""), f"Bold {self.s['bold']}"]
+                 self.view_label(), MODE_SHORT.get(self.s["mode"], "")]
+        if self.s["mode"] != "color":          # bold only applies to the gray / e-ink modes
+            parts.append(f"Bold {self.s['bold']}")
         if self.s["subpixel"] != "off" and self.s["mode"] == "gray":
             parts.append("Sharp LCD text")
         if self.s["crop"]:
@@ -1830,13 +1876,15 @@ class App:
             m.add_command(label="Zoom in   +", command=lambda: self.zoom(+1))
             m.add_command(label="Zoom out   -", command=lambda: self.zoom(-1))
             m.add_command(label="Full width   Ctrl+0", command=self.zoom_full_width)
-            m.add_command(label="Rotate 90°", command=self.rotate)
+            m.add_command(label="Rotate 90°   R", command=self.rotate)
             paper_menu = tk.Menu(m, tearoff=0)
             self._menu_paper = tk.StringVar(value=self.s["page"])
             for val, (label, _p, _i) in PAPERS.items():
                 paper_menu.add_radiobutton(label=label, value=val, variable=self._menu_paper,
                                            command=lambda v=val: self._set_setting("page", v))
             m.add_cascade(label="Paper", menu=paper_menu)
+            self._menu_color = tk.BooleanVar(value=self.s["mode"] == "color")
+            m.add_checkbutton(label="Full color   K", variable=self._menu_color, command=self.toggle_color)
             self._menu_inv = tk.BooleanVar(value=self.night)
             m.add_checkbutton(label="Dark app frame", variable=self._menu_inv, command=self.toggle_theme)
         m.add_separator()
@@ -1901,6 +1949,19 @@ class App:
         self.s["mode"] = order[(order.index(cur) + 1) % len(order)]
         self.refresh_view()
         self.note(dict(MODES)[self.s["mode"]])
+
+    def toggle_color(self):
+        """Color on / off. Off returns to the gray / e-ink mode used before."""
+        if self.s["mode"] == "color":
+            back = self.s["mode_before_color"]
+            self.s["mode"] = back if back in dict(MODES) and back != "color" else "gray"
+            self.note("Color off: " + dict(MODES)[self.s["mode"]])
+        else:
+            self.s["mode_before_color"] = self.s["mode"]
+            self.s["mode"] = "color"
+            self.note("Full color")
+        self.clear_selection()
+        self.refresh_view()
 
     def change_darkness(self, delta):
         self.s["darkness"] = round(max(1.0, min(3.0, self.s["darkness"] + delta)), 1)
@@ -2264,7 +2325,8 @@ class App:
         scale(mid, "sharpen", "Sharpen (when subpixel is off)", 0, 3)
         scale(mid, "width_pct", "Fit width: page width (% of screen)", 30, 100, 10)
         radios(mid, "mode", "Rendering", MODES)
-        tk.Label(mid, text="Subpixel text is used with Grayscale.", font=self.font_small,
+        tk.Label(mid, text="Subpixel text is used with Grayscale.\nFull color shows true colors; text darkness "
+                           "and bold\napply to the gray modes only.", justify="left", font=self.font_small,
                  bg="white", fg="black").pack(anchor="w", pady=(4, 0))
 
         tk.Label(right, text="Text", font=self.font, bg="white", fg="black").pack(anchor="w")
